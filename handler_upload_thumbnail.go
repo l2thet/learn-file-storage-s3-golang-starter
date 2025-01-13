@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -47,6 +46,10 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	defer file.Close()
 
 	contentType := fileHeader.Header.Get("Content-Type")
+	if contentType == "" {
+		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
+		return
+	}
 
 	fileData, err := io.ReadAll(file)
 	if err != nil {
@@ -54,41 +57,29 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	videoMetadata, err := cfg.db.GetVideo(videoID)
+	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't get video", err)
 		return
 	}
 
-	if videoMetadata.UserID != userID {
+	if video.UserID != userID {
 		respondWithError(w, http.StatusUnauthorized, "Not your video", nil)
 		return
 	}
 
-	thumbnail := thumbnail{
+	videoThumbnails[videoID] = thumbnail{
 		data:      fileData,
 		mediaType: contentType,
 	}
 
-	videoThumbnails[videoID] = thumbnail
+	url := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID)
 
-	thumbnailURL := fmt.Sprintf("http://localhost:8091/api/thumbnails/%s", videoID)
-
-	video := database.Video{
-		ID:           videoMetadata.ID,
-		CreatedAt:    videoMetadata.CreatedAt,
-		UpdatedAt:    videoMetadata.UpdatedAt,
-		ThumbnailURL: &thumbnailURL,
-		VideoURL:     videoMetadata.VideoURL,
-		CreateVideoParams: database.CreateVideoParams{
-			Title:       videoMetadata.Title,
-			Description: videoMetadata.Description,
-			UserID:      videoMetadata.UserID,
-		},
-	}
+	video.ThumbnailURL = &url
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
+		delete(videoThumbnails, videoID)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video", err)
 		return
 	}
